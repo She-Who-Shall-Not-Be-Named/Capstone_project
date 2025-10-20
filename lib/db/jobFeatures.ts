@@ -1,8 +1,9 @@
 // lib/db/jobFeatures.ts
 
 // Upsert job features from NLP to the database 
-//import { createClient } from "@/utils/supabase/client";
 
+
+// fields in jobFeatures table
 export type dbJobFeatures = {
   time_type: string | null;
   salary_min: number | null;
