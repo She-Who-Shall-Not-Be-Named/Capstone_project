@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { safe } from "@/lib/safe";
+import { safe } from "@/lib/scoring/safe";
 import {
   getUser,
   request_lock_and_tokens,

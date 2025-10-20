@@ -18,9 +18,9 @@ export const adapters: AdaptersRegistry = {
 export { greenhouseAdapter, webAdapter };
 */
 
-import { greenhouseAdapter } from "./adapters/greenhouse";
-import { webAdapter } from "./adapters/web";
-import type { AdapterJob } from "./adapters/types";
+import { greenhouseAdapter } from "../adapters/greenhouse";
+import { webAdapter } from "../adapters/web";
+import type { AdapterJob } from "../adapters/types";
 
 type GreenhouseFn = (tenant_slug: string, external_job_id: string) => Promise<AdapterJob | null>;
 type WebFn = (url: string) => Promise<AdapterJob | null>;

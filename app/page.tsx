@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { analyzeJob, type Tier, type RiskResult } from "@/lib/analyzeJob";
+import { analyzeJob, type Tier, type RiskResult } from "../lib/scoring/analyzeJob";
 import { logout } from "@/utils/supabase/action";
 
 const SAMPLE_JOB = `We're looking for a rockstar developer to join our dynamic team! This is a fast-paced environment where you'll wear many hats and be a self-starter.

@@ -7,7 +7,7 @@
     ** WEB: npx tsx dev/testAdapter.ts web <url>
  */
 
-import { adapters } from "../lib/adapters";
+import { adapters } from "../lib/scoring/adapters";
 
 type AtsProvider = keyof typeof adapters;
 

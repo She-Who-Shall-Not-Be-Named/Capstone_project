@@ -16,7 +16,7 @@
 */
 
 
-import scrapeJobFromUrl from "../lib/scraper";
+import scrapeJobFromUrl from "../lib/scoring/scraper";
 
 type Expected =
   | "denylist"

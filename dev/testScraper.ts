@@ -14,7 +14,7 @@
 
 // if using (see above), will need to change import path and possibly
 // function name if changed
-import { scrapeJobFromUrl } from "../lib/scraper";
+import { scrapeJobFromUrl } from "../lib/scoring/scraper";
 
 async function main() {
   const url = process.argv[2];

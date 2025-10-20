@@ -10,8 +10,8 @@ import {
   AlertTriangle,
   XCircle,
 } from "lucide-react";
-import { samplePosts, buzzwords } from "@/lib/constants";
-import { analyzeJob } from "@/lib/analyzeJob";
+import { samplePosts, buzzwords } from "@/lib/scoring/constants";
+import { analyzeJob } from "@/lib/scoring/analyzeJob";
 
 interface RiskResult {
   score: number;
