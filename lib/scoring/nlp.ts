@@ -14,10 +14,6 @@ export async function analyzeAndScoreJob(jobData: AdapterJob): Promise<scoringTy
     
     // This gives us the database fields 
     const features: Combined = await analyzeAdapterJob(jobData);
-       
-    if (!features) {
-        throw new Error("Failed to extract features because analyzeAdapterJob returned null.");
-    }
 
     // Re-extract the clean text from the job object for the second LLM call.
     const html = pickContent(jobData); 
