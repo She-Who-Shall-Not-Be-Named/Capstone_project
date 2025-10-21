@@ -86,8 +86,9 @@ export async function analyzeAdapterJob(job: AdapterJob): Promise<Combined> {
     if (job.ats_provider === "greenhouse") {
         try {
         features = extractGhFeaturesFromMetadata(pickMetadata(job));
-        } catch(e) {
-        features = {};
+        } catch(err) {
+            console.warn("Failed to extract Greenhouse metadata:", err);
+            features = {};
         }
     }
 
