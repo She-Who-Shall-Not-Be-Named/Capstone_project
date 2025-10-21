@@ -94,22 +94,23 @@ export async function analysisWithLLM(
 
     const finalUserPrompt = userPrompt.join('\n'); // Rename variable for clarity
 
-  const resp = await client.responses.create({
-    model,
-    temperature,
-    input: [
-      { role: "system", content: system }, { role: "user", content: finalUserPrompt },
-    ],
-    text : {
-        format : {
-            type: 'json_schema',
-            name: 'analysis',
-            schema,
-            strict: true,
+    try { 
+        const resp = await client.responses.create({
+        model,
+        temperature,
+        input: [
+        { role: "system", content: system }, { role: "user", content: finalUserPrompt },
+        ],
+        text : {
+            format : {
+                type: 'json_schema',
+                name: 'analysis',
+                schema,
+                strict: true,
 
+            },
         },
-    },
-  });
+    });
     // Safety checks on LLM results
     const parsed = JSON.parse(resp.output_text ?? "{}");
 
@@ -123,4 +124,13 @@ export async function analysisWithLLM(
     if (!["hour", "year", null].includes(parsed.comp_period_detected)) parsed.comp_period_detected = null;
 
     return parsed as analysis; // Returns the clean type
+    } catch(error)
+    {
+        console.error("Error during LLM analysis or JSON parsing:", error); 
+        return {
+            skills: [],
+            buzzwords: { hits: [], count: 0 },
+            comp_period_detected: null,
+        }; 
+    }
 }
