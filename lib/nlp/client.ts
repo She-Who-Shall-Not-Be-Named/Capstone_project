@@ -5,7 +5,6 @@
 
 import OpenAI from "openai";
 import { z } from "zod";
-import { scrapeJobFromUrl } from "../scoring/scraper"; 
 import type { AdapterJob } from "../adapters/types";
 import { dbJobFeatures } from "../db/jobFeatures";
 import { extractGhFeaturesFromMetadata, extractSalaryFromText, htmlToPlainText, finalizeSalary } from "../normalizers/greenhouse";
@@ -58,51 +57,6 @@ function pickLocationName(job: AdapterJob): string | null {
   return typeof name === "string" && name ? name : null;
 }
 
-
-/** 
-function pickLocationFromJsonLd(job: AdapterJob): string | null {
-  const jl = (job as any)?.raw_json?.jsonld;
-  if (!Array.isArray(jl)) return null;
-
-  for (const item of jl) {
-    const o = item as any;
-    const types = Array.isArray(o?.["@type"]) ? o["@type"] : [o?.["@type"]];
-    const lower = types.filter(Boolean).map((t: any) => String(t).toLowerCase());
-    if (!lower.includes("jobposting")) continue;
-
-    // jobLocation can be an object or array; normalize to an array
-    const locs = Array.isArray(o?.jobLocation) ? o.jobLocation : [o?.jobLocation].filter(Boolean);
-    for (const loc of locs) {
-      const addr = loc?.address ?? o?.hiringOrganization?.address;
-      const parts = [
-        addr?.addressLocality,
-        addr?.addressRegion,
-        addr?.addressCountry,
-      ].filter((x) => typeof x === "string" && x.trim());
-      if (parts.length) return parts.join(", ");
-    }
-
-    // Some schemas put it flat
-    const addr = o?.jobLocation?.address ?? o?.address;
-    const parts = [
-      addr?.addressLocality,
-      addr?.addressRegion,
-      addr?.addressCountry,
-    ].filter((x) => typeof x === "string" && x.trim());
-    if (parts.length) return parts.join(", ");
-  }
-  return null;
-}
-
-function normalizeEmploymentType(timeType?: string | null): JobNLP["time_type"] {
-  const s = (timeType ?? "").toLowerCase();
-  if (/full[-\s]?time/.test(s)) return "full-time";
-  if (/part[-\s]?time/.test(s)) return "part-time";
-  if (/contract|temp|temporary|cont(ractor)?/.test(s)) return "contract";
-  return null;
-}
-*/
-
 // ensures the deterministic value always overrides the LLM value if it exists (v !== undefined && v !== null).
 function mergePreferDeterministic<T extends object, U extends object>(det: T, ai: U): T & U {
   const out: any = { ...ai };
@@ -126,8 +80,7 @@ function unitHints(text: string): { hour: boolean; year: boolean } {
 // ---- Core: analyze an AdapterJob ----
 export async function analyzeAdapterJob(job: AdapterJob): Promise<Combined> {
     // 1) Start with deterministic features (from GH metadata only if GH)
-    // What: If this job came from Greenhouse, try to pull the structured fields from their metadata array.
-    // features now contains any fields we could deterministically extract (may be empty).
+    // If this job came from Greenhouse, try to pull the structured fields from their metadata array.
     let features: Partial<DBFeatures> = {};
     
     if (job.ats_provider === "greenhouse") {
@@ -138,43 +91,32 @@ export async function analyzeAdapterJob(job: AdapterJob): Promise<Combined> {
         }
     }
 
-    // 2) Convert the adapter’s HTML/content into plain text. If there’s enough text, run heuristics to find salary ranges and set salary_min/max (and possibly related flags).
-    //If text is too short we bail early with whatever we have and a “blank” NLP block. dont call the LLM.
-    const rawText = htmlToPlainText(pickContent(job)).trim();
+    // 2) Convert the adapter’s HTML/content into plain text.
+    const rawText = htmlToPlainText(pickContent(job));
     const plainText = rawText.slice(0, 20_000);
 
     const f2 = { ...features }; //shallow copy to keep top features 
-    extractSalaryFromText(plainText, f2 as any);
+    //If there’s enough text, run heuristics to find salary ranges and set salary_min/max
+    extractSalaryFromText(plainText, f2);
 
-    const { hour, year } = unitHints(plainText);
+    const { hour} = unitHints(plainText);
 
-    // If numbers are small but no explicit hourly words drop them
-    if ((f2 as any).salary_min != null && (f2 as any).salary_max != null) {
-    const min = Number((f2 as any).salary_min);
-    const max = Number((f2 as any).salary_max);
+    // If numbers are small but no explicit hourly words, delete
+    if (f2.salary_min != null && f2.salary_max != null) {
+    const min = Number(f2.salary_min);
+    const max = Number(f2.salary_max);
     const tinyRange = max <= 100;
 
     if (tinyRange && !hour) {
-        delete (f2 as any).salary_min;
-        delete (f2 as any).salary_max;
-        delete (f2 as any).salary_mid;
-        delete (f2 as any).comp_period;
-        delete (f2 as any).salary_source;
+        delete f2.salary_min;
+        delete f2.salary_max;
+        delete f2.salary_mid;
+        delete f2.salary_source;
     }
     }
-
-    // If the text is “year” and the period is 'hour' with tiny numbers drop them
-    if (year && !hour && (f2 as any).comp_period === "hour") {
-    delete (f2 as any).salary_min;
-    delete (f2 as any).salary_max;
-    delete (f2 as any).salary_mid;
-    delete (f2 as any).comp_period;
-    delete (f2 as any).salary_source;
-    }
+    
 
     features = f2;
-    console.log("DEBUG: Deterministic Features After Step 2:", features); 
-
 
     // 3) LLM Schema with fields
     const schema = {
@@ -206,7 +148,8 @@ export async function analyzeAdapterJob(job: AdapterJob): Promise<Combined> {
                 "You are a structured information extractor for job postings. " +
                 "Return ONLY valid JSON that matches the provided JSON Schema. " +
                 "If a value is not explicitly stated, return null. Never invent values. " +
-                "Extract location from content which must be a human-readable geography (city + state/province + country if present). "
+                "Extract location from content which must be a human-readable geography (city + state/province + country if present)). " +
+                "Currency must be the three-letter ISO 4217 code (e.g., USD, CAD, GBP)." 
             },
             { role: "user", content: "Full job text: " + plainText },
         ],
@@ -235,23 +178,14 @@ export async function analyzeAdapterJob(job: AdapterJob): Promise<Combined> {
         }
     }
 
-    // If the LLM didn’t give a location, try to pull a deterministic one from the adapter. Then normalize time_type to your enum.
-    //aiData.location ??= pickLocationFromJsonLd(job) ?? pickLocationName(job);
+    // If the LLM didn’t give a location, try to pull a deterministic one from the adapter.
     aiData.location ??= pickLocationName(job); 
 
-    // Merge features and aiData with a rule that deterministic values are priority if they’re defined. Then compute salary_mid if we have min/max.
+    // Merge features and aiData with a rule that deterministic values are priority if they’re defined.
     const merged = mergePreferDeterministic(features, aiData);
 
+    // compute salary_mid if we have min/max.
     finalizeSalary(merged as any); 
 
     return merged;
-}
-
-// wrapper
-export async function analyzeJobFromUrl(url: string): Promise<Combined | null> {
-  const job = await scrapeJobFromUrl(url);
-  if (!job) return null;
-    // cast the result to AdapterJob bc the scraper can return a generic object
-    // or null, but analyzeAdapterJob expects AdapterJob.
-  return analyzeAdapterJob(job as AdapterJob);
 }
