@@ -2,14 +2,14 @@
 import { z } from "zod";
 
 export type GHCanon = {
-  time_type?: string;
-  salary_min?: number;
-  salary_mid?: number;
-  salary_max?: number;
-  currency?: string;
-  department?: string;
-  salary_source?: "metadata" | "text";
-  comp_period?: "hour" | "year";
+  time_type?: string | null;
+  salary_min?: number | null;
+  salary_mid?: number | null;
+  salary_max?: number | null;
+  currency?: string | null;
+  department?: string | null;
+  salary_source?: "metadata" | "text" | null;
+  comp_period?: "hour" | "year" | null;
 };
 
 /** Zod guard for GH metadata array (kept permissive). */
@@ -59,6 +59,7 @@ export function finalizeSalary(features: GHCanon) {
     if (has(min) && has(mid) && !has(max) && (mid as number) > (min as number)) {
         max = mid; 
         mid = undefined; // Clear midpoint to recalculate later
+        features.salary_mid = undefined;
     }
 
   // Keep ordering sane if both provided
@@ -129,7 +130,7 @@ export function htmlToPlainText(html: string): string {
  *   - Use only base salary labels (ignore OTE/on-target and any equity/RSU).
  *   - Do not invent a max from a mid.
  *   - If only min exists, leave max unset.
- *   - Heuristic for comp period: <= 300 → "hour", otherwise "year".
+ *   - Heuristic for comp period: <= 300 → "hour", otherwise "year".        
  */
 export function extractGhFeaturesFromMetadata(raw: unknown): GHCanon {
   const features: GHCanon = {};
