@@ -1,8 +1,7 @@
 //lib/nlp/index.ts
-import OpenAI from "openai";
-
 // Extra analysis with NLP
 
+import OpenAI from "openai";
 
 export type skillType = { name: string;};
 
@@ -13,46 +12,33 @@ export type analysis = {
 };
 
 
-// Helpers 
-
-export function hintBuzzwords(text: string, list: string[] = []) {
-  const base = ["rockstar","ninja","guru","synergy","hustle","wear many hats","disrupt","game-changing","wizard"];
-  const bag = Array.from(new Set([...base, ...list].map(s => s.toLowerCase())));
-  const t = text.toLowerCase();
-  const hits = bag.filter(w => t.includes(w));
-  return { buzzwords: hits.slice(0, 30) };
-}
-
-export function hintCompPeriod(text: string): "hour" | "year" | null {
-  const s = text.toLowerCase();
-  if (/\b(hourly|\/\s*hr|\$?\d+\s*\/\s*h|\bper\s*hour\b|\bhrly\b)\b/.test(s)) return "hour";
-  if (/\b(annual|salary|per\s*yr|per\s*year|\/\s*yr|\/\s*year)\b/.test(s)) return "year";
-  return null;
-}
-
-
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+const buzzwordList = 
+[ "rockstar",
+  "ninja",
+  "dynamic",
+  "fast-paced",
+  "self-starter",
+  "wear many hats",
+]
 
 export async function analysisWithLLM(
   {
     text,                          // cleaned HTML->text, 
-    metadata,                      // minimal DB-ish fields to compare
-    buzzwordList = [],             // custom buzzwords
+    metadata, 
     model = "gpt-4o-mini",    
     temperature = 0.2
   }: {
     text: string;
-    metadata: { time_type?: string|null; currency?: string|null };
-    buzzwordList?: string[];
+    // metadata is defined here if you need it (it's passed from scoring/nlp.ts)
+    metadata: { time_type?: string|null; currency?: string|null }; 
     model?: string;
     temperature?: number;
   }
 ): Promise<analysis> {
 
-  // ---- build lightweight hints  ----
-  const { buzzwords } = hintBuzzwords(text, buzzwordList);
-  const compPeriodHint = hintCompPeriod(text);
 
   // ---- JSON schema ONLY for insights ----
   const schema = {
@@ -90,15 +76,29 @@ export async function analysisWithLLM(
     "Return ONLY valid JSON matching the schema.",
     "Guidelines:",
     "- skills: up to 20 canonical skills (e.g., 'SQL', 'Python', 'AWS', 'Stakeholder management').",
-    "- buzzwords: list and count actual occurrences in text (cross-check given hints).",
+    "- check for job posting buzzwords that may be red flags: list and count actual occurrences in text (cross-check given hints).",
     "- comp_period_detected: 'hour' or 'year' if clearly implied; else null."
   ].join("\n");
+
+    const userPrompt = [
+        "Full job text to analyze:",
+        text,
+        "\n--- HINTS (Do not invent based on these): ---",
+        `Time Type already determined: ${metadata.time_type ?? 'None'}`,
+        `Currency already determined: ${metadata.currency ?? 'None'}`,
+        ];
+
+    if (buzzwordList.length > 0) {
+        userPrompt.push(`\n--- CUSTOM BUZZWORDS ---\nCheck for the following red-flag terms in the JOB TEXT and count their exact occurrences for the 'buzzwords' field: ${buzzwordList.join(', ')}`);
+    }
+
+    const finalUserPrompt = userPrompt.join('\n'); // Rename variable for clarity
 
   const resp = await client.responses.create({
     model,
     temperature,
     input: [
-      { role: "system", content: system },
+      { role: "system", content: system }, { role: "user", content: finalUserPrompt },
     ],
     text : {
         format : {
