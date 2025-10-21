@@ -167,15 +167,19 @@ export async function analyzeAdapterJob(job: AdapterJob): Promise<Combined> {
   };
 
    let aiData: JobNLP;
+   let firstError: unknown; // Store the first error
     try {
         aiData = await callOnce();
     } catch (e) {
+        firstError = e;
         try {
             aiData = await callOnce();
         } catch (e2) {
-            // If the second attempt fails, log/handle and fall back to the empty NLP block.
             console.error("LLM failed twice:", e, e2);
-            aiData = EmptyNLP;
+            const combinedError = new Error("LLM analysis failed after 2 retries.");
+            (combinedError as any).firstAttemptError = firstError;
+            (combinedError as any).secondAttemptError = e2;
+            throw combinedError; 
         }
     }
 
