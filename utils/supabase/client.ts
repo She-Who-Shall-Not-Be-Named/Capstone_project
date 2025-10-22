@@ -1,3 +1,5 @@
+// utils/supabase/client.ts
+
 import { createBrowserClient } from '@supabase/ssr'
 
 // This function returns a Supabase client for the browser.
