@@ -1,6 +1,5 @@
-// lib/normalizers/web.ts
 import { z } from "zod";
-import { asNum } from "../adapters/util";
+import { asNum, extractSalaryFromTextCore, htmlToPlainText } from "@/app/api/data-ingestion/adapters/util";
 
 export type WebCompPeriod = "hour" | "year";
 export type WebFeatures = {
@@ -12,48 +11,6 @@ export type WebFeatures = {
   salary_source?: "jsonld" | "text";
 };
 
-export function htmlToPlainText(html: string): string {
-  if (!html) return "";
-
-  const named: Record<string, string> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " ",
-  };
-
-  const decodeEntities = (s: string) =>
-    s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (_m, g1: string) => {
-      if (g1[0] === "#") {
-        const hex = g1[1]?.toLowerCase() === "x";
-        const code = parseInt(hex ? g1.slice(2) : g1.slice(1), hex ? 16 : 10);
-        if (Number.isFinite(code)) return String.fromCodePoint(code);
-        return _m;
-      }
-      return Object.prototype.hasOwnProperty.call(named, g1) ? named[g1] : _m;
-    });
-
-  let text = decodeEntities(String(html));
-
-  text = text
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<\/h[1-6]>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n");
-
-  text = text.replace(/<[^>]+>/g, "");
-
-  text = text
-    .replace(/\u00A0/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return text;
-}
 
 /* ------------------------------ Zod Schemas ------------------------------ */
 /** https://schema.org/QuantitativeValue */
@@ -117,7 +74,7 @@ function finalizeSalary(features: WebFeatures) {
 
   // Only compute midpoint when both bounds exist
   if (!has(mid) && has(min) && has(max)) {
-    mid = ((min as number) + (max as number)) / 2;
+    mid = Math.round(((min as number) + (max as number)) / 2 * 100) / 100;
   }
 
   // Do not infer a missing bound from midpoint
@@ -173,7 +130,6 @@ const items: Array<z.infer<typeof ZJobPosting>> = Array.isArray(parsed.data)
       if (maxV !== undefined) max = maxV;
       if (valV !== undefined) mid = valV; // treat lone value as midpoint
     } else {
-      // Flat number or string number on MonetaryAmount.value
       const flat = asNum(ma.value as unknown);
       if (flat !== undefined) {
         mid = flat;
@@ -206,60 +162,18 @@ const items: Array<z.infer<typeof ZJobPosting>> = Array.isArray(parsed.data)
 export function extractWebFeaturesFromText(text: string): WebFeatures {
   const features: WebFeatures = {};
   if (!text) return features;
-  const s = String(text);
 
-  // "$170,000 - $250,000" (or "170,000 to 250,000")
-  const dollarsRange = /\$?\s?(\d{2,3}(?:,\d{3})?)\s*(?:-|–|to)\s*\$?\s?(\d{2,3}(?:,\d{3})?)/i;
-  // "170k - 250k"
-  const kRange = /(\d{2,3})\s*k\s*(?:-|–|to)\s*(\d{2,3})\s*k/i;
-  // Single-point "$19.30"
-  const singleDollar = /\$\s?(\d{1,3}(?:,\d{3})?(?:\.\d{1,2})?)/;
-
-  let loNum: number | null = null;
-  let hiNum: number | null = null;
-  let sawDollarSymbol = false;
-
-  const m1 = s.match(dollarsRange);
-  if (m1) {
-    loNum = parseFloat(m1[1].replace(/,/g, ""));
-    hiNum = parseFloat(m1[2].replace(/,/g, ""));
-    sawDollarSymbol = /\$/.test(m1[0]);
-  } else {
-    const m2 = s.match(kRange);
-    if (m2) {
-      const lo = parseFloat(m2[1]);
-      const hi = parseFloat(m2[2]);
-      if (!Number.isNaN(lo) && !Number.isNaN(hi)) {
-        loNum = lo * 1000;
-        hiNum = hi * 1000;
-      }
-    } else {
-      const m3 = s.match(singleDollar);
-      if (m3) {
-        const v = parseFloat(m3[1].replace(/,/g, ""));
-        if (Number.isFinite(v)) {
-          loNum = v;
-          hiNum = v;
-          sawDollarSymbol = true;
-        }
-      }
-    }
-  }
-
-  if (loNum == null || hiNum == null || Number.isNaN(loNum) || Number.isNaN(hiNum)) {
+  const result = extractSalaryFromTextCore(text);
+  
+  if (!result.found) {
     return features;
   }
 
-  features.salary_min = loNum;
-  features.salary_max = hiNum;
-  if (sawDollarSymbol) features.currency = "USD";
+  features.salary_min = result.salary_min!;
+  features.salary_max = result.salary_max!;
+  if (result.currency) features.currency = result.currency;
   features.salary_source = "text";
-
-  // Infer comp period heuristically if not obvious
-  const probe = loNum ?? hiNum;
-  if (probe != null) {
-    features.comp_period = probe <= 300 ? "hour" : "year";
-  }
+  features.comp_period = result.comp_period;
 
   finalizeSalary(features);
   return features;

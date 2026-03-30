@@ -1,6 +1,5 @@
-// lib/normalizers/greenhouse.ts
 import { z } from "zod";
-
+import { extractSalaryFromTextCore, htmlToPlainText } from "@/app/api/data-ingestion/adapters/util";
 export type GHCanon = {
   time_type?: string | null;
   salary_min?: number | null;
@@ -8,7 +7,7 @@ export type GHCanon = {
   salary_max?: number | null;
   currency?: string | null;
   department?: string | null;
-  salary_source?: "metadata" | "text" | null;
+  salary_source?: "metadata" | "content" | "jsonld" | "text" | null;
   comp_period?: "hour" | "year" | null;
 };
 
@@ -54,75 +53,36 @@ export function finalizeSalary(features: GHCanon) {
   let mid = features.salary_mid;
   let max = features.salary_max;
 
-    // --- NEW LOGIC ADDED HERE TO CORRECT MISASSIGNED MAX/MID ---
-    // If we have a Min, a Mid, but NO Max, and Mid > Min, Mid is likely the Max.
-    if (has(min) && has(mid) && !has(max) && (mid as number) > (min as number)) {
-        max = mid; 
-        mid = undefined; // Clear midpoint to recalculate later
-        features.salary_mid = undefined;
-    }
+  // Handle invalid ordering: if mid < min, treat mid as the new min
+  if (has(min) && has(mid) && (mid as number) < (min as number)) {
+    min = mid as number;
+    mid = undefined;
+  }
 
-  // Keep ordering sane if both provided
+  // Handle invalid ordering: if mid > max, treat mid as the new max
+  if (has(mid) && has(max) && (mid as number) > (max as number)) {
+    max = mid as number;
+    mid = undefined;
+  }
+
+  // Keep ordering sane if both min and max provided
   if (has(min) && has(max) && (min as number) > (max as number)) {
     const t = min as number;
     min = max as number;
     max = t;
   }
 
-  // Only compute midpoint when BOTH bounds exist
+  // Only compute midpoint when both bounds exist and no midpoint
   if (!has(mid) && has(min) && has(max)) {
-    mid = ((min as number) + (max as number)) / 2;
+    mid = Math.round(((min as number) + (max as number)) / 2 * 100) / 100;
   }
 
-  // Do not infer missing max from mid, and don’t mirror singletons.
-  if (has(min)) features.salary_min = min as number;
-  if (has(mid)) features.salary_mid = mid as number;
-  if (has(max)) features.salary_max = max as number;
+  // Update features with validated values
+  features.salary_min = has(min) ? min as number : undefined;
+  features.salary_mid = has(mid) ? mid as number : undefined;
+  features.salary_max = has(max) ? max as number : undefined;
 }
 
-/** Convert (possibly entity-escaped) HTML to readable plain text. */
-export function htmlToPlainText(html: string): string {
-  if (!html) return "";
-
-  const named: Record<string, string> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " ",
-  };
-
-  const decodeEntities = (s: string) =>
-    s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (_m, g1: string) => {
-      if (g1[0] === "#") {
-        const hex = g1[1]?.toLowerCase() === "x";
-        const code = parseInt(hex ? g1.slice(2) : g1.slice(1), hex ? 16 : 10);
-        if (Number.isFinite(code)) return String.fromCodePoint(code);
-        return _m;
-      }
-      return Object.prototype.hasOwnProperty.call(named, g1) ? named[g1] : _m;
-    });
-
-  let text = decodeEntities(String(html));
-
-  text = text
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<\/h[1-6]>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n");
-
-  text = text.replace(/<[^>]+>/g, "");
-
-  text = text
-    .replace(/\u00A0/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return text;
-}
 
 /**
  * Extract salary & related fields from Greenhouse metadata.
@@ -207,66 +167,33 @@ export function extractGhFeaturesFromMetadata(raw: unknown): GHCanon {
   return features;
 }
 
-/** Text fallback: only fills fields that metadata didn’t already populate. */
+/** Text fallback: only fills fields that metadata didn't already populate. */
 export function extractSalaryFromText(text: string, features: GHCanon) {
   if (!text) return;
 
-  const s = String(text);
-
-  // 1) "$170,000 - $250,000" (or "170,000 to 250,000")
-  const dollarsRange = /\$?\s?(\d{2,3}(?:,\d{3})?)\s*(?:-|–|to)\s*\$?\s?(\d{2,3}(?:,\d{3})?)/i;
-  // 2) "170k - 250k"
-  const kRange = /(\d{2,3})\s*k\s*(?:-|–|to)\s*(\d{2,3})\s*k/i;
-  // 3) single-point "$19.30" used for hourly roles
-  const singleDollar = /\$\s?(\d{1,3}(?:,\d{3})?(?:\.\d{1,2})?)/;
-
-  let loNum: number | null = null;
-  let hiNum: number | null = null;
-  let sawDollarSymbol = false;
-
-  const m1 = s.match(dollarsRange);
-  if (m1) {
-    loNum = parseFloat(m1[1].replace(/,/g, ""));
-    hiNum = parseFloat(m1[2].replace(/,/g, ""));
-    sawDollarSymbol = /\$/.test(m1[0]);
-  } else {
-    const m2 = s.match(kRange);
-    if (m2) {
-      const lo = parseFloat(m2[1]);
-      const hi = parseFloat(m2[2]);
-      if (!Number.isNaN(lo) && !Number.isNaN(hi)) {
-        loNum = lo * 1000;
-        hiNum = hi * 1000;
-      }
-    } else {
-      const m3 = s.match(singleDollar);
-      if (m3) {
-        const v = parseFloat(m3[1].replace(/,/g, ""));
-        if (Number.isFinite(v)) {
-          loNum = v;
-          hiNum = v;
-          sawDollarSymbol = true;
-        }
-      }
-    }
-  }
-
-  if (loNum == null || hiNum == null || Number.isNaN(loNum) || Number.isNaN(hiNum)) {
+  const result = extractSalaryFromTextCore(text);
+  
+  if (!result.found) {
     return; // nothing to set
   }
 
   let changed = false;
   if (features.salary_min == null) {
-    features.salary_min = loNum;
+    features.salary_min = result.salary_min!;
     changed = true;
   }
   if (features.salary_max == null) {
-    features.salary_max = hiNum;
+    features.salary_max = result.salary_max!;
     changed = true;
   }
-  if (!features.currency && sawDollarSymbol) {
-    features.currency = "USD";
+  if (!features.currency && result.currency) {
+    features.currency = result.currency;
     changed = true;
+  }
+
+  // Set compensation period based on detection
+  if (changed && !features.comp_period) {
+    features.comp_period = result.comp_period;
   }
 
   if (changed && features.salary_source !== "metadata") {

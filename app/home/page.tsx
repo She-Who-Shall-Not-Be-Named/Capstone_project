@@ -11,7 +11,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { samplePosts, buzzwords } from "@/lib/constants";
-import { analyzeJob } from "@/lib/analyzeJob";
+// Note: analyzeJob is now only called server-side via saveJobCheck
+// This home page needs to be updated to use the proper API
 
 interface RiskResult {
   score: number;
@@ -32,34 +33,14 @@ const Index = () => {
   const [currentScore, setCurrentScore] = useState(0);
   const observerRef = useRef<IntersectionObserver | null>(null);
 
+  // TODO: Update this function to use the proper API (saveJobCheck)
+  // For now, this is disabled as it uses the old analyzeJob signature
   const handleAnalyze = async () => {
     if (!jobText.trim()) return;
-
+    
     setIsAnalyzing(true);
-    setCurrentScore(0);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    const analysisResult = analyzeJob(jobText);
-    setResult(analysisResult);
+    alert("This feature needs to be updated to use the new API. Please use the main job-buster page instead.");
     setIsAnalyzing(false);
-
-    // Animate score counter
-    let start = 0;
-    const end = analysisResult.score;
-    const duration = 1000;
-    const increment = end / (duration / 16);
-
-    const timer = setInterval(() => {
-      start += increment;
-      if (start >= end) {
-        setCurrentScore(end);
-        clearInterval(timer);
-      } else {
-        setCurrentScore(Math.floor(start));
-      }
-    }, 16);
-
-    document.getElementById("results")?.scrollIntoView({ behavior: "smooth" });
   };
 
   const handleSampleClick = (sample: "A" | "B") => {
